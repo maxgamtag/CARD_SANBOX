@@ -23,6 +23,12 @@ Aplikasi web permainan kartu remi berbasis **sandbox** (*open-source*, ringan, d
 
 ---
 
+## 🤖 Kredit
+
+-Aplikasi KartuSandbox ini dirancang dan dibuat bersama Gemini (Google AI) untuk menghadirkan meja kartu virtual berbasis sandbox yang ringan, responsif, dan bebas dikustomisasi oleh komunitas.
+
+---
+
 ## 📄 Lisensi (Open Source — MIT License)
 
 ```text
