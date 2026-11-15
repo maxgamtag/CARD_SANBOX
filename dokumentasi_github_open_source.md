@@ -23,22 +23,6 @@ Aplikasi web permainan kartu remi berbasis **sandbox** (*open-source*, ringan, d
 
 ---
 
-## 🚀 Cara Publikasi ke GitHub & GitHub Pages
-
-Karena seluruh aplikasi dikemas dalam **satu file `index.html`** tanpa proses *build* yang rumit, proyek ini bisa langsung di-hosting secara gratis di **GitHub Pages**:
-
-1. **Buat Repository Baru di GitHub**
-   - Masuk ke [GitHub](https://github.com/new), beri nama repository (misalnya `kartu-sandbox`), dan pilih **Public**.
-2. **Upload File**
-   - Unggah `index.html` dan `README.md` ke branch `main`.
-3. **Aktifkan GitHub Pages**
-   - Buka tab **Settings → Pages** pada repository Anda.
-   - Pada bagian **Build and deployment → Source**, pilih **Deploy from a branch**.
-   - Pilih branch `main` dan folder `/ (root)`, lalu klik **Save**.
-   - Dalam ±1 menit, aplikasi dapat diakses publik melalui `https://<username-anda>.github.io/kartu-sandbox/` dan langsung siap dimainkan lewat **Mode Solo** maupun **Mode WiFi / P2P Lokal**.
-
----
-
 ## 📄 Lisensi (Open Source — MIT License)
 
 ```text
