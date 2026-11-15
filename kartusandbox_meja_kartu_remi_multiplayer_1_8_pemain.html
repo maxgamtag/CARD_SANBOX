@@ -1,0 +1,2587 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>KartuSandbox — Meja Kartu Remi Virtual (1–8 Pemain)</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- PeerJS (WebRTC P2P Lokal: Host sebagai Server) -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <!-- Google Fonts: Inter & Cinzel untuk aksen kartu -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --card-w: 56px;
+      --card-h: 78px;
+    }
+    @media (min-width: 640px) {
+      :root {
+        --card-w: 70px;
+        --card-h: 98px;
+      }
+    }
+    @media (min-width: 1024px) {
+      :root {
+        --card-w: 78px;
+        --card-h: 110px;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      font-family: 'Inter', sans-serif;
+      background-color: #062415;
+      color: #f8fafc;
+    }
+
+    /* Tekstur meja felt kasino hijau gelap */
+    .felt-surface {
+      background:
+        radial-gradient(circle at 50% 45%, rgba(26, 117, 72, 0.92) 0%, rgba(12, 66, 39, 0.96) 65%, rgba(5, 34, 19, 1) 100%),
+        repeating-linear-gradient(45deg, rgba(255,255,255,0.015) 0px, rgba(255,255,255,0.015) 2px, transparent 2px, transparent 4px);
+      box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.65);
+    }
+
+    /* Desain Kartu Remi */
+    .playing-card {
+      position: absolute;
+      width: var(--card-w);
+      height: var(--card-h);
+      border-radius: 8px;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.3);
+      cursor: grab;
+      touch-action: none;
+      will-change: transform;
+      transition: box-shadow 0.15s ease, outline 0.15s ease;
+    }
+
+    .playing-card.is-dragging {
+      cursor: grabbing;
+      box-shadow: 0 18px 32px rgba(0, 0, 0, 0.65), 0 4px 10px rgba(0, 0, 0, 0.4);
+      transition: none !important;
+      z-index: 99999 !important;
+    }
+
+    .playing-card.is-selected {
+      outline: 2.5px solid #fbbf24;
+      outline-offset: 2px;
+      box-shadow: 0 0 18px rgba(251, 191, 36, 0.65);
+    }
+
+    /* Sisi Depan Kartu (Face-Up) */
+    .card-face-up {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(145deg, #ffffff 0%, #f1f5f9 100%);
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 3px 4px;
+    }
+
+    /* Sisi Belakang Kartu (Face-Down) */
+    .card-face-down {
+      width: 100%;
+      height: 100%;
+      background-color: #1e3a8a;
+      border: 2.5px solid #f8fafc;
+      border-radius: 8px;
+      position: relative;
+      overflow: hidden;
+      background-image:
+        radial-gradient(#60a5fa 1px, transparent 1px),
+        radial-gradient(#93c5fd 1px, #1e3a8a 1px);
+      background-size: 10px 10px;
+      background-position: 0 0, 5px 5px;
+    }
+
+    .card-face-down::after {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      border-radius: 4px;
+      pointer-events: none;
+    }
+
+    /* Kartu di Tangan Pribadi (Dock Bawah) */
+    .hand-card {
+      position: relative;
+      width: var(--card-w);
+      height: var(--card-h);
+      flex-shrink: 0;
+      border-radius: 8px;
+      box-shadow: -3px 2px 10px rgba(0, 0, 0, 0.45);
+      cursor: grab;
+      touch-action: none;
+      transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1), margin 0.16s ease;
+    }
+
+    .hand-card:hover {
+      transform: translateY(-10px) scale(1.04);
+      z-index: 50;
+    }
+
+    /* Animasi kocok deck */
+    @keyframes deckShuffleAnim {
+      0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
+      20% { transform: translate(calc(-50% - 14px), -50%) rotate(-6deg); }
+      40% { transform: translate(calc(-50% + 14px), -50%) rotate(6deg); }
+      60% { transform: translate(calc(-50% - 10px), -50%) rotate(-4deg); }
+      80% { transform: translate(calc(-50% + 10px), -50%) rotate(4deg); }
+    }
+    .animate-shuffle {
+      animation: deckShuffleAnim 0.45s ease-in-out;
+    }
+
+    /* Scrollbar halus untuk tangan pemain jika kartu sangat banyak */
+    .hand-scroll::-webkit-scrollbar {
+      height: 5px;
+    }
+    .hand-scroll::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 999px;
+    }
+    .hand-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.25);
+      border-radius: 999px;
+    }
+
+    .font-royal {
+      font-family: 'Cinzel', serif;
+    }
+  </style>
+</head>
+<body>
+  <!-- ===================================================================== -->
+  <!-- 1. TAMPILAN LOBBY AWAL                                                -->
+  <!-- ===================================================================== -->
+  <div id="lobby-view" class="w-full h-full flex flex-col items-center justify-center p-4 overflow-y-auto felt-surface">
+    <div class="w-full max-w-xl bg-slate-900/90 backdrop-blur-md border border-emerald-500/30 rounded-3xl p-6 sm:p-8 shadow-2xl">
+      <!-- Header Branding -->
+      <div class="text-center mb-6">
+        <div class="inline-flex items-center justify-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-xs font-semibold tracking-wide mb-3">
+          <span>♠</span><span>♥</span><span>MEJA KARTU SANDBOX 1–8 PEMAIN</span><span>♦</span><span>♣</span>
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+          Kartu<span class="text-emerald-400">Sandbox</span>
+        </h1>
+        <p class="text-slate-300 text-sm sm:text-base mt-2 leading-relaxed">
+          Bebas main Solitaire, Tepok Nyamuk, Cangkulan, Remi, atau aturan buatanmu sendiri. Geser, tumpuk, balik, dan acak hingga 10 deck!
+        </p>
+      </div>
+
+      <!-- Input Nama Pemain -->
+      <div class="mb-6">
+        <label for="player-name-input" class="block text-xs font-semibold uppercase tracking-wider text-emerald-300 mb-2">
+          Nama Pemain Anda
+        </label>
+        <div class="relative">
+          <input
+            id="player-name-input"
+            type="text"
+            maxlength="16"
+            placeholder="Masukkan nama panggilan..."
+            class="w-full px-4 py-3 rounded-xl bg-slate-800/90 border border-slate-700 text-white placeholder-slate-400 focus:outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20 text-base font-medium"
+          />
+          <button
+            type="button"
+            id="btn-random-name"
+            title="Acak Nama"
+            class="absolute right-2.5 top-1/2 -translate-y-1/2 px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 font-medium transition"
+          >
+            🎲 Acak
+          </button>
+        </div>
+      </div>
+
+      <!-- 3 Pilihan Mode Bermain -->
+      <div class="space-y-3.5">
+        <!-- Opsi A: Main Sendiri (Solo Mode) -->
+        <button
+          id="btn-start-solo"
+          class="w-full group flex items-center justify-between p-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-950/50 transition-all active:scale-[0.99] text-left"
+        >
+          <div class="flex items-center gap-3.5">
+            <div class="w-11 h-11 rounded-xl bg-white/15 flex items-center justify-center text-2xl shrink-0">
+              🃏
+            </div>
+            <div>
+              <div class="font-bold text-base sm:text-lg">Main Sendiri (Solo Mode)</div>
+              <div class="text-emerald-100 text-xs sm:text-sm">Langsung masuk ke meja untuk Solitaire atau latihan</div>
+            </div>
+          </div>
+          <span class="text-xl font-bold group-hover:translate-x-1 transition-transform">→</span>
+        </button>
+
+        <!-- Opsi B: Mode WiFi / P2P Lokal (Host Jadi Server - Anti Lag) -->
+        <div class="p-4 rounded-2xl bg-slate-800/95 border border-amber-400/40 shadow-lg space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5">
+              <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-xl shrink-0">
+                📡
+              </div>
+              <div>
+                <div class="font-bold text-sm sm:text-base text-amber-300 flex items-center gap-1.5">
+                  <span>WiFi / P2P Lokal (Host = Server)</span>
+                </div>
+                <div class="text-slate-300 text-xs">Perangkat pembuat room jadi server langsung • Zero lag</div>
+              </div>
+            </div>
+            <span class="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/30 text-[10px] font-bold text-amber-200 shrink-0">
+              P2P LAN
+            </span>
+          </div>
+
+          <button
+            id="btn-create-p2p"
+            class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs sm:text-sm shadow transition active:scale-[0.99] flex items-center justify-center gap-2"
+          >
+            <span>👑</span><span>Buat Room WiFi (Jadi Server 1–8 Pemain)</span>
+          </button>
+
+          <div class="flex gap-2">
+            <input
+              id="join-p2p-code-input"
+              type="text"
+              maxlength="5"
+              placeholder="KODE WIFI"
+              class="flex-1 min-w-0 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 uppercase tracking-widest font-bold text-center text-sm focus:outline-none focus:border-amber-400"
+            />
+            <button
+              id="btn-join-p2p"
+              class="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs sm:text-sm shadow transition active:scale-95 shrink-0"
+            >
+              Gabung WiFi
+            </button>
+          </div>
+        </div>
+
+        <!-- Opsi C: Mode Cloud Server (Online Jarak Jauh) -->
+        <details class="group rounded-2xl bg-slate-800/60 border border-slate-700/80 overflow-hidden">
+          <summary class="px-4 py-3 cursor-pointer list-none flex items-center justify-between text-xs sm:text-sm font-semibold text-slate-300 hover:text-white transition">
+            <span class="flex items-center gap-2">
+              <span>☁️</span>
+              <span>Mode Cloud Room (Online Jarak Jauh)</span>
+            </span>
+            <span class="text-slate-400 group-open:rotate-180 transition-transform">▼</span>
+          </summary>
+          <div class="px-4 pb-4 pt-1 space-y-2.5 border-t border-slate-700/60">
+            <button
+              id="btn-create-room"
+              class="w-full py-2.5 px-4 rounded-xl bg-sky-600/90 hover:bg-sky-500 text-white font-bold text-xs sm:text-sm shadow transition active:scale-[0.99]"
+            >
+              Buat Cloud Room Baru (1–8 Pemain)
+            </button>
+            <div class="flex gap-2">
+              <input
+                id="join-code-input"
+                type="text"
+                maxlength="5"
+                placeholder="KODE CLOUD"
+                class="flex-1 min-w-0 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-white placeholder-slate-500 uppercase tracking-widest font-bold text-center text-sm focus:outline-none focus:border-sky-400"
+              />
+              <button
+                id="btn-join-room"
+                class="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs sm:text-sm shadow transition active:scale-95 shrink-0"
+              >
+                Gabung
+              </button>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      <!-- Status Koneksi & Open Source Info -->
+      <div class="mt-5 pt-4 border-t border-white/10 flex flex-col items-center gap-1.5 text-center">
+        <div id="lobby-status" class="text-xs text-slate-400 flex items-center justify-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse" id="auth-dot"></span>
+          <span id="auth-status-text">Menyiapkan mode permainan...</span>
+        </div>
+        <div class="text-[11px] text-slate-500">
+          Open Source (MIT License) • Mendukung GitHub Pages & P2P WiFi Lokal
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 2. TAMPILAN MEJA PERMAINAN (GAME TABLE VIEW)                          -->
+  <!-- ===================================================================== -->
+  <div id="game-view" class="hidden w-full h-full flex flex-col relative overflow-hidden felt-surface">
+    <!-- TOP HUD BAR -->
+    <header class="w-full px-2.5 sm:px-4 py-2 bg-slate-950/75 backdrop-blur-md border-b border-white/10 flex items-center justify-between gap-2 z-[120] shrink-0">
+      <!-- Kiri: Info Room & Salin Kode -->
+      <div class="flex items-center gap-2 min-w-0">
+        <div id="room-badge" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-950/90 border border-emerald-500/40 text-xs sm:text-sm font-bold text-emerald-300 shrink-0">
+          <span id="room-mode-label">SOLO</span>
+          <span id="room-code-display" class="tracking-widest text-white font-mono"></span>
+          <button
+            id="btn-copy-code"
+            class="hidden ml-1 px-2 py-0.5 rounded-md bg-emerald-600/40 hover:bg-emerald-500/60 text-[11px] text-white font-semibold transition"
+            title="Salin Kode Room"
+          >
+            Salin
+          </button>
+        </div>
+
+        <div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/80 border border-white/10 text-xs text-slate-300">
+          <span>👥</span>
+          <span id="player-count-label">1/8 Pemain</span>
+        </div>
+
+        <div class="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/80 border border-white/10 text-xs text-amber-300">
+          <span>🃏</span>
+          <span id="deck-info-label">1 Deck • 2 Joker</span>
+        </div>
+      </div>
+
+      <!-- Kanan: Tombol Pengaturan, Suara, Panduan, Keluar -->
+      <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <button
+          id="btn-open-settings"
+          class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition"
+        >
+          <span>⚙️</span>
+          <span>Atur Deck</span>
+        </button>
+
+        <button
+          id="btn-toggle-sound"
+          title="Suara Efek"
+          class="p-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-200 text-sm transition"
+        >
+          🔊
+        </button>
+
+        <button
+          id="btn-open-help"
+          title="Cara Bermain"
+          class="p-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 border border-white/10 text-slate-200 text-sm transition"
+        >
+          ❓
+        </button>
+
+        <button
+          id="btn-leave-room"
+          class="px-2.5 py-1.5 rounded-xl bg-rose-600/80 hover:bg-rose-500 text-white text-xs sm:text-sm font-semibold transition"
+        >
+          Keluar
+        </button>
+      </div>
+    </header>
+
+    <!-- BARIS KURSI PEMAIN (1 - 8 KURSI) -->
+    <div id="seats-bar" class="w-full px-2 py-1.5 bg-black/25 border-b border-white/5 flex items-center gap-1.5 sm:gap-2 overflow-x-auto z-[110] shrink-0 hand-scroll">
+      <!-- Diisi dinamis oleh JS: 8 slot kursi -->
+    </div>
+
+    <!-- TOOLBAR PENGACAK & KONTROL MEJA -->
+    <div class="w-full px-2 py-1.5 flex items-center justify-center z-[110] shrink-0 pointer-events-none">
+      <div class="pointer-events-auto inline-flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 px-2.5 py-1.5 rounded-2xl bg-slate-900/85 backdrop-blur-md border border-white/15 shadow-xl">
+        <button
+          id="btn-shuffle"
+          class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs sm:text-sm font-semibold flex items-center gap-1 shadow transition"
+        >
+          <span>🔀</span><span>Kocok Deck</span>
+        </button>
+
+        <button
+          id="btn-random-draw"
+          class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 active:scale-95 text-white text-xs sm:text-sm font-semibold flex items-center gap-1 shadow transition"
+          title="Ambil 1 kartu secara acak langsung ke tangan Anda"
+        >
+          <span>🎲</span><span>Tarik Acak</span>
+        </button>
+
+        <button
+          id="btn-random-scatter"
+          class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-500 active:scale-95 text-white text-xs sm:text-sm font-semibold flex items-center gap-1 shadow transition"
+          title="Sebar kartu deck secara acak di tengah meja"
+        >
+          <span>✨</span><span>Sebar Acak</span>
+        </button>
+
+        <button
+          id="btn-open-deal"
+          class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 active:scale-95 text-white text-xs sm:text-sm font-semibold flex items-center gap-1 shadow transition"
+        >
+          <span>🃏</span><span>Bagi Kartu</span>
+        </button>
+
+        <button
+          id="btn-gather-all"
+          class="px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-600 active:scale-95 text-slate-100 text-xs sm:text-sm font-semibold flex items-center gap-1 shadow transition"
+        >
+          <span>📥</span><span>Kumpulkan</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- AREA MEJA VIRTUAL (PUBLIC TABLE ARENA) -->
+    <main id="table-arena" class="relative z-10 flex-1 w-full overflow-hidden touch-none">
+      <!-- Garis dekorasi tengah meja -->
+      <div class="absolute inset-4 sm:inset-8 rounded-[2.5rem] border-2 border-emerald-400/15 pointer-events-none flex items-center justify-center">
+        <div class="text-emerald-300/10 font-royal text-2xl sm:text-4xl font-black tracking-widest select-none text-center px-4">
+          KARTU SANDBOX
+        </div>
+      </div>
+
+      <!-- TUMPUKAN DECK UTAMA (MAIN DECK STACK) -->
+      <div
+        id="main-deck-widget"
+        style="left: 14%; top: 32%;"
+        class="absolute -translate-x-1/2 -translate-y-1/2 z-20 flex flex-col items-center select-none"
+      >
+        <div
+          id="deck-stack-visual"
+          class="relative cursor-pointer group active:scale-95 transition-transform"
+          style="width: var(--card-w); height: var(--card-h);"
+          title="Klik untuk mengambil 1 kartu teratas ke tangan"
+        >
+          <!-- Lapisan efek ketebalan tumpukan -->
+          <div id="deck-layer-3" class="absolute inset-0 rounded-lg bg-blue-950 border border-white/40 translate-x-1.5 translate-y-1.5"></div>
+          <div id="deck-layer-2" class="absolute inset-0 rounded-lg bg-blue-900 border border-white/60 translate-x-0.5 translate-y-0.5"></div>
+          <div id="deck-layer-top" class="card-face-down shadow-xl flex items-center justify-center">
+            <div class="px-1.5 py-0.5 rounded bg-slate-950/80 border border-amber-400/50 text-amber-300 font-extrabold text-xs sm:text-sm shadow">
+              <span id="deck-count-number">54</span>
+            </div>
+          </div>
+          <!-- Status Deck Kosong -->
+          <div
+            id="deck-empty-slot"
+            class="hidden absolute inset-0 rounded-lg border-2 border-dashed border-emerald-300/35 bg-black/20 flex items-center justify-center text-[10px] text-emerald-200/60 font-semibold text-center p-1"
+          >
+            Deck Kosong
+          </div>
+        </div>
+
+        <!-- Tombol Cepat di Bawah Deck -->
+        <div class="mt-2 flex items-center gap-1">
+          <button
+            id="btn-draw-one"
+            class="px-2 py-1 rounded-lg bg-emerald-600/90 hover:bg-emerald-500 text-white text-[11px] font-bold shadow border border-white/15 active:scale-95 transition"
+          >
+            + Ambil 1
+          </button>
+          <button
+            id="btn-flip-top-to-table"
+            class="px-2 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-amber-300 text-[11px] font-bold shadow border border-white/15 active:scale-95 transition"
+            title="Buka 1 kartu teratas ke meja"
+          >
+            Buka
+          </button>
+        </div>
+      </div>
+
+      <!-- LAYER KARTU DI MEJA (RENDER DINAMIS) -->
+      <div id="table-cards-layer" class="absolute inset-0 w-full h-full"></div>
+
+      <!-- FLOATING QUICK ACTION BAR UNTUK KARTU TERPILIH DI MEJA (SANGAT MEMBANTU DI HP) -->
+      <div
+        id="selected-card-bar"
+        class="hidden absolute bottom-3 left-1/2 -translate-x-1/2 z-[90000] flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-slate-900/95 border border-amber-400/50 shadow-2xl"
+      >
+        <span id="selected-card-label" class="text-xs font-bold text-amber-300 mr-1">Kartu:</span>
+        <button
+          id="btn-sel-flip"
+          class="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition"
+        >
+          🔄 Balik
+        </button>
+        <button
+          id="btn-sel-rotate"
+          class="px-2.5 py-1 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold transition"
+        >
+          ⤵️ Putar
+        </button>
+        <button
+          id="btn-sel-to-hand"
+          class="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition"
+        >
+          ✋ Ambil
+        </button>
+        <button
+          id="btn-sel-close"
+          title="Tutup Menu Kartu"
+          class="ml-1 w-7 h-7 rounded-lg bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white text-xs font-extrabold flex items-center justify-center transition"
+        >
+          ✕
+        </button>
+      </div>
+    </main>
+
+    <!-- =================================================================== -->
+    <!-- DOCK BAWAH: TANGAN PRIBADI PEMAIN (PRIVATE HAND)                    -->
+    <!-- =================================================================== -->
+    <section
+      id="private-hand-dock"
+      class="w-full bg-slate-950/90 backdrop-blur-md border-t-2 border-emerald-500/35 px-3 py-2 z-[200] shrink-0 flex flex-col transition-colors"
+    >
+      <!-- Header Dock Tangan -->
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+        <div class="flex items-center gap-2">
+          <span class="text-xs sm:text-sm font-bold text-emerald-300 flex items-center gap-1.5">
+            <span>✋ Tangan Anda</span>
+            <span id="hand-count-badge" class="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-white text-xs">0</span>
+          </span>
+          <span class="hidden md:inline text-[11px] text-slate-400">
+            (Tarik kartu ke atas meja atau ketuk kartu untuk melempar ke tengah)
+          </span>
+        </div>
+
+        <div class="flex items-center gap-1.5 sm:gap-2">
+          <!-- Toggle Kondisi Kartu Saat Ditarik/Dilempar ke Meja -->
+          <button
+            id="btn-toggle-throw-mode"
+            class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] sm:text-xs font-semibold flex items-center gap-1 transition"
+            title="Atur apakah kartu yang ditarik dari tangan ke meja dalam kondisi Terbuka atau Tertutup"
+          >
+            <span class="text-slate-400">Lempar:</span>
+            <span id="throw-mode-text" class="text-emerald-400 font-bold">Terbuka</span>
+          </button>
+
+          <button
+            id="btn-sort-hand"
+            class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-white/15 text-[11px] sm:text-xs text-slate-200 font-semibold transition"
+          >
+            Urutkan
+          </button>
+        </div>
+      </div>
+
+      <!-- Daftar Kartu di Tangan Pribadi -->
+      <div
+        id="hand-cards-container"
+        class="w-full min-h-[86px] sm:min-h-[106px] lg:min-h-[118px] flex items-center gap-1.5 sm:gap-2 overflow-x-auto overflow-y-visible py-1 px-1 hand-scroll"
+      >
+        <div id="hand-empty-hint" class="w-full text-center text-xs text-slate-500 italic py-4">
+          Tangan kosong — klik "+ Ambil 1", "Tarik Acak", atau seret kartu dari meja ke area ini.
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 3. MODAL PENGATURAN DECK & JOKER KUSTOM                               -->
+  <!-- ===================================================================== -->
+  <div id="settings-modal" class="hidden fixed inset-0 z-[999999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-slate-900 border border-amber-400/30 rounded-3xl p-6 shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg sm:text-xl font-extrabold text-white flex items-center gap-2">
+          <span>⚙️</span> Pengaturan Deck & Joker
+        </h2>
+        <button id="btn-close-settings" title="Tutup" class="w-9 h-9 rounded-full bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white font-bold flex items-center justify-center transition">✕</button>
+      </div>
+
+      <div class="space-y-5">
+        <!-- Slider & Input Jumlah Deck (1 - 10) -->
+        <div class="p-4 rounded-2xl bg-slate-800/80 border border-white/10">
+          <div class="flex items-center justify-between mb-2">
+            <label for="input-deck-count" class="text-sm font-bold text-emerald-300">Jumlah Deck Standar</label>
+            <span class="text-xs font-semibold text-slate-300 bg-slate-900 px-2.5 py-1 rounded-lg border border-white/10">
+              <span id="label-deck-count" class="text-white font-bold">1</span> Deck (<span id="label-standard-cards">52</span> kartu)
+            </span>
+          </div>
+          <input
+            id="input-deck-count"
+            type="range"
+            min="1"
+            max="10"
+            value="1"
+            class="w-full accent-emerald-500 cursor-pointer"
+          />
+          <div class="flex justify-between text-[11px] text-slate-400 mt-1">
+            <span>1 Deck (52)</span>
+            <span>5 Deck (260)</span>
+            <span>10 Deck (520)</span>
+          </div>
+        </div>
+
+        <!-- Slider & Input Jumlah Kartu Joker (0 - 30) -->
+        <div class="p-4 rounded-2xl bg-slate-800/80 border border-white/10">
+          <div class="flex items-center justify-between mb-2">
+            <label for="input-joker-count" class="text-sm font-bold text-amber-300">Jumlah Kartu Joker</label>
+            <span class="text-xs font-semibold text-slate-300 bg-slate-900 px-2.5 py-1 rounded-lg border border-white/10">
+              <span id="label-joker-count" class="text-white font-bold">2</span> Joker
+            </span>
+          </div>
+          <input
+            id="input-joker-count"
+            type="range"
+            min="0"
+            max="30"
+            value="2"
+            class="w-full accent-amber-500 cursor-pointer"
+          />
+          <div class="flex justify-between text-[11px] text-slate-400 mt-1">
+            <span>0 (Tanpa Joker)</span>
+            <span>15 Joker</span>
+            <span>30 Joker</span>
+          </div>
+        </div>
+
+        <!-- Ringkasan Total Kartu -->
+        <div class="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-500/30 flex items-center justify-between">
+          <span class="text-xs sm:text-sm text-emerald-200 font-medium">Total Seluruh Kartu di Meja:</span>
+          <span id="label-total-cards" class="text-lg font-extrabold text-white">54 Kartu</span>
+        </div>
+
+        <button
+          id="btn-apply-deck"
+          class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-sm sm:text-base shadow-lg transition active:scale-[0.99]"
+        >
+          Terapkan & Reset Deck
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 4. MODAL BAGI KARTU (DEAL CARDS)                                      -->
+  <!-- ===================================================================== -->
+  <div id="deal-modal" class="hidden fixed inset-0 z-[999999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="w-full max-w-sm bg-slate-900 border border-sky-400/30 rounded-3xl p-6 shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-extrabold text-white flex items-center gap-2">
+          <span>🃏</span> Bagi Kartu ke Pemain
+        </h2>
+        <button id="btn-close-deal" title="Tutup" class="w-9 h-9 rounded-full bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white font-bold flex items-center justify-center transition">✕</button>
+      </div>
+
+      <p class="text-xs text-slate-300 mb-4 leading-relaxed">
+        Kartu akan dibagikan secara acak dan adil langsung ke tangan pribadi seluruh pemain yang duduk di kursi meja.
+      </p>
+
+      <div class="mb-4">
+        <label for="input-deal-amount" class="block text-xs font-bold uppercase tracking-wider text-sky-300 mb-2">
+          Jumlah Kartu per Pemain
+        </label>
+        <div class="flex items-center gap-2">
+          <input
+            id="input-deal-amount"
+            type="number"
+            min="1"
+            max="100"
+            value="5"
+            class="w-full px-4 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-bold text-lg text-center focus:outline-none focus:border-sky-400"
+          />
+        </div>
+        <!-- Preset Cepat -->
+        <div class="grid grid-cols-4 gap-1.5 mt-2">
+          <button type="button" data-deal-preset="4" class="deal-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200">4</button>
+          <button type="button" data-deal-preset="5" class="deal-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200">5</button>
+          <button type="button" data-deal-preset="7" class="deal-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200">7</button>
+          <button type="button" data-deal-preset="13" class="deal-preset-btn py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200">13</button>
+        </div>
+      </div>
+
+      <div class="space-y-2.5">
+        <button
+          id="btn-confirm-deal"
+          class="w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-sm shadow transition"
+        >
+          Bagi Sesuai Jumlah
+        </button>
+        <button
+          id="btn-deal-all-even"
+          class="w-full py-3 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-white font-bold text-sm shadow transition"
+        >
+          Bagi Rata Semua Sisa Deck
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 5. MODAL PANDUAN KONTROL                                              -->
+  <!-- ===================================================================== -->
+  <div id="help-modal" class="hidden fixed inset-0 z-[999999] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-slate-900 border border-emerald-400/30 rounded-3xl p-6 shadow-2xl max-h-[85dvh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-extrabold text-white">📖 Panduan Meja Sandbox</h2>
+        <button id="btn-close-help" title="Tutup" class="w-9 h-9 rounded-full bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white font-bold flex items-center justify-center transition">✕</button>
+      </div>
+      <ul class="space-y-3 text-xs sm:text-sm text-slate-200">
+        <li class="p-3 rounded-xl bg-slate-800/80">
+          <strong class="text-emerald-300 block mb-0.5">🖐️ Geser & Tumpuk Bebas</strong>
+          Seret kartu mana saja di meja ke posisi mana pun. Kartu terakhir yang disentuh otomatis berada di tumpukan paling atas.
+        </li>
+        <li class="p-3 rounded-xl bg-slate-800/80">
+          <strong class="text-amber-300 block mb-0.5">🔄 Membalik Kartu (Buka / Tutup)</strong>
+          Klik ganda (double-tap) pada kartu di meja, atau ketuk kartu lalu tekan tombol <em>Balik</em> di bagian bawah meja.
+        </li>
+        <li class="p-3 rounded-xl bg-slate-800/80">
+          <strong class="text-sky-300 block mb-0.5">✋ Tangan Pribadi (Dock Bawah)</strong>
+          Kartu di tangan hanya terlihat oleh Anda. Pemain lain hanya melihat jumlah kartu di kursi Anda. Atur tombol <em>Lempar: Terbuka / Tertutup</em> sesuai permainan (misal: Tertutup untuk Tepok Nyamuk).
+        </li>
+        <li class="p-3 rounded-xl bg-slate-800/80">
+          <strong class="text-purple-300 block mb-0.5">🎲 Fitur Pengacak Kartu</strong>
+          Gunakan <em>Kocok Deck</em>, <em>Tarik Acak</em> (ambil 1 kartu random ke tangan), dan <em>Sebar Acak</em> (sebarkan kartu deck ke tengah meja dengan rotasi acak).
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- 6. TOAST NOTIFIKASI REAL-TIME                                         -->
+  <!-- ===================================================================== -->
+  <div id="toast-container" class="fixed top-14 right-3 z-[1000000] flex flex-col gap-2 pointer-events-none max-w-[85vw] sm:max-w-xs"></div>
+
+  <!-- ===================================================================== -->
+  <!-- SCRIPT APLIKASI, WIFI P2P LOKAL & FIREBASE REAL-TIME                  -->
+  <!-- ===================================================================== -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+    import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      setDoc,
+      onSnapshot,
+      runTransaction
+    } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+    // -------------------------------------------------------------------------
+    // A. INISIALISASI FIREBASE & AUTENTIKASI
+    // -------------------------------------------------------------------------
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'kartu-sandbox-default';
+    let firebaseConfig = null;
+    try {
+      if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+        firebaseConfig = JSON.parse(__firebase_config);
+      }
+    } catch (e) {
+      console.error("Gagal mem-parsing konfigurasi Firebase:", e);
+    }
+
+    let app = null;
+    let auth = null;
+    let db = null;
+    let currentUser = null;
+    let isFirebaseReady = false;
+
+    const authDot = document.getElementById('auth-dot');
+    const authStatusText = document.getElementById('auth-status-text');
+
+    async function initAuth() {
+      if (!firebaseConfig) {
+        authDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+        authStatusText.textContent = "Solo & WiFi P2P Lokal Siap (Standalone / GitHub Pages)";
+        currentUser = { uid: 'u_' + Math.random().toString(36).substring(2, 10) };
+        return;
+      }
+
+      try {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        db = getFirestore(app);
+
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          const cred = await signInWithCustomToken(auth, __initial_auth_token);
+          currentUser = cred.user;
+        } else {
+          const cred = await signInAnonymously(auth);
+          currentUser = cred.user;
+        }
+
+        isFirebaseReady = true;
+        authDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+        authStatusText.textContent = "WiFi P2P Lokal & Cloud Server Siap";
+      } catch (err) {
+        console.error("Error Autentikasi Firebase:", err);
+        authDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+        authStatusText.textContent = "Mode Solo & WiFi P2P Lokal Siap";
+        currentUser = { uid: 'u_' + Math.random().toString(36).substring(2, 10) };
+      }
+    }
+
+    const authReadyPromise = initAuth();
+
+    // -------------------------------------------------------------------------
+    // B. STATE UTAMA & KONSTANTA MEJA (1 - 8 KURSI)
+    // -------------------------------------------------------------------------
+    const SEAT_COLORS = [
+      { dot: 'bg-emerald-400', badge: 'border-emerald-400/40 bg-emerald-950/70 text-emerald-200' },
+      { dot: 'bg-sky-400', badge: 'border-sky-400/40 bg-sky-950/70 text-sky-200' },
+      { dot: 'bg-amber-400', badge: 'border-amber-400/40 bg-amber-950/70 text-amber-200' },
+      { dot: 'bg-rose-400', badge: 'border-rose-400/40 bg-rose-950/70 text-rose-200' },
+      { dot: 'bg-purple-400', badge: 'border-purple-400/40 bg-purple-950/70 text-purple-200' },
+      { dot: 'bg-cyan-400', badge: 'border-cyan-400/40 bg-cyan-950/70 text-cyan-200' },
+      { dot: 'bg-orange-400', badge: 'border-orange-400/40 bg-orange-950/70 text-orange-200' },
+      { dot: 'bg-lime-400', badge: 'border-lime-400/40 bg-lime-950/70 text-lime-200' }
+    ];
+
+    const SUIT_META = {
+      S: { symbol: '♠', label: 'Sekop', colorClass: 'text-slate-900' },
+      H: { symbol: '♥', label: 'Hati', colorClass: 'text-rose-600' },
+      C: { symbol: '♣', label: 'Keriting', colorClass: 'text-slate-900' },
+      D: { symbol: '♦', label: 'Wajik', colorClass: 'text-rose-600' }
+    };
+
+    const SUITS = ['S', 'H', 'C', 'D'];
+    const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+
+    let gameState = {
+      mode: 'solo', // 'solo' | 'p2p' | 'multi'
+      isP2PHost: false,
+      roomCode: null,
+      hostId: null,
+      players: {}, // { [uid]: { uid, name, seatIndex, colorIdx, joinedAt } }
+      settings: {
+        deckCount: 1,
+        jokerCount: 2
+      },
+      cards: [], // Array of card objects
+      maxZ: 60,
+      lastLog: '',
+      lastLogId: 0
+    };
+
+    let unsubscribeRoom = null;
+    let peerInstance = null;
+    let p2pHostConnections = new Map(); // Host menyimpan koneksi ke semua client: Map<peerId, DataConnection>
+    let p2pClientConn = null; // Client menyimpan koneksi ke Host
+    let throwFaceUp = true; // Kondisi kartu saat dilempar dari tangan ke meja
+    let selectedTableCardId = null;
+    let lastShownLogId = 0;
+    let dragState = null;
+    let soundEnabled = true;
+
+    // Pool elemen DOM kartu di meja agar rendering 550 kartu tetap ringan 60fps
+    const tableCardDomPool = new Map();
+
+    // -------------------------------------------------------------------------
+    // C. EFEK SUARA RINGAN (WEB AUDIO API)
+    // -------------------------------------------------------------------------
+    let audioCtx = null;
+
+    function playCardSound(type = 'slide') {
+      if (!soundEnabled) return;
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        if (!audioCtx) audioCtx = new AudioContextClass();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        const now = audioCtx.currentTime;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        if (type === 'shuffle') {
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(220, now);
+          osc.frequency.exponentialRampToValueAtTime(520, now + 0.09);
+          osc.frequency.exponentialRampToValueAtTime(180, now + 0.18);
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now);
+          osc.stop(now + 0.2);
+        } else if (type === 'flip') {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(480, now);
+          osc.frequency.exponentialRampToValueAtTime(760, now + 0.06);
+          gain.gain.setValueAtTime(0.07, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now);
+          osc.stop(now + 0.075);
+        } else {
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(300, now);
+          osc.frequency.exponentialRampToValueAtTime(160, now + 0.05);
+          gain.gain.setValueAtTime(0.05, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now);
+          osc.stop(now + 0.06);
+        }
+      } catch (_) {}
+    }
+
+    // -------------------------------------------------------------------------
+    // D. UTILITAS DECK, KARTU & FORMAT TAMPILAN
+    // -------------------------------------------------------------------------
+    function generateRoomCode() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let result = '';
+      for (let i = 0; i < 5; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return result;
+    }
+
+    function getPlayerName() {
+      const raw = document.getElementById('player-name-input').value.trim();
+      if (raw) return raw.slice(0, 16);
+      const fallback = `Pemain_${Math.floor(10 + Math.random() * 89)}`;
+      document.getElementById('player-name-input').value = fallback;
+      return fallback;
+    }
+
+    function findAvailableSeatIndex(playersObj) {
+      const occupied = new Set(Object.values(playersObj || {}).map(p => p.seatIndex));
+      for (let i = 0; i < 8; i++) {
+        if (!occupied.has(i)) return i;
+      }
+      return -1;
+    }
+
+    function fisherYatesShuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    }
+
+    function buildDeckCards(deckCount = 1, jokerCount = 2) {
+      const rawCards = [];
+      let idCounter = 1;
+
+      for (let d = 0; d < deckCount; d++) {
+        for (const s of SUITS) {
+          for (const r of RANKS) {
+            rawCards.push({
+              id: idCounter++,
+              s,
+              r,
+              loc: 'deck',
+              own: null,
+              f: false,
+              x: 50,
+              y: 50,
+              rot: 0,
+              z: 1,
+              ho: 0
+            });
+          }
+        }
+      }
+
+      for (let j = 0; j < jokerCount; j++) {
+        rawCards.push({
+          id: idCounter++,
+          s: 'J',
+          r: j % 2 === 0 ? 'JK1' : 'JK2',
+          loc: 'deck',
+          own: null,
+          f: false,
+          x: 50,
+          y: 50,
+          rot: 0,
+          z: 1,
+          ho: 0
+        });
+      }
+
+      fisherYatesShuffle(rawCards);
+      rawCards.forEach((c, idx) => {
+        c.z = idx + 1;
+      });
+      return rawCards;
+    }
+
+    function formatCardShortName(card) {
+      if (!card) return '';
+      if (card.s === 'J') {
+        return card.r === 'JK1' ? 'Joker Merah' : 'Joker Hitam';
+      }
+      const meta = SUIT_META[card.s] || { symbol: '' };
+      return `${card.r}${meta.symbol}`;
+    }
+
+    function renderCardInnerHTML(card, isFaceUp) {
+      if (!isFaceUp) {
+        return `<div class="card-face-down"></div>`;
+      }
+
+      if (card.s === 'J') {
+        const isRedJoker = card.r === 'JK1';
+        const colorCls = isRedJoker ? 'text-rose-600' : 'text-indigo-800';
+        const badgeBg = isRedJoker ? 'bg-rose-50 border-rose-200' : 'bg-indigo-50 border-indigo-200';
+        return `
+          <div class="card-face-up ${colorCls}">
+            <div class="flex items-center justify-between leading-none font-black text-[10px] sm:text-xs">
+              <span>JK</span>
+              <span>★</span>
+            </div>
+            <div class="flex flex-col items-center justify-center my-auto px-1 py-0.5 rounded ${badgeBg} border">
+              <span class="text-base sm:text-xl leading-none">🃏</span>
+              <span class="font-royal text-[8px] sm:text-[9px] font-black tracking-tighter mt-0.5">JOKER</span>
+            </div>
+            <div class="flex items-center justify-between leading-none font-black text-[10px] sm:text-xs rotate-180">
+              <span>JK</span>
+              <span>★</span>
+            </div>
+          </div>
+        `;
+      }
+
+      const meta = SUIT_META[card.s] || { symbol: '?', colorClass: 'text-slate-900' };
+      return `
+        <div class="card-face-up ${meta.colorClass}">
+          <div class="flex flex-col items-start leading-none">
+            <span class="font-extrabold text-[11px] sm:text-sm tracking-tighter">${card.r}</span>
+            <span class="text-[11px] sm:text-sm leading-none">${meta.symbol}</span>
+          </div>
+          <div class="text-center text-xl sm:text-3xl leading-none my-auto opacity-90 select-none">
+            ${meta.symbol}
+          </div>
+          <div class="flex flex-col items-start leading-none rotate-180">
+            <span class="font-extrabold text-[11px] sm:text-sm tracking-tighter">${card.r}</span>
+            <span class="text-[11px] sm:text-sm leading-none">${meta.symbol}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // -------------------------------------------------------------------------
+    // E. NOTIFIKASI TOAST
+    // -------------------------------------------------------------------------
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+
+      const el = document.createElement('div');
+      let borderCls = 'border-emerald-400/40 bg-slate-900/95 text-slate-100';
+      if (type === 'warn') borderCls = 'border-amber-400/50 bg-slate-900/95 text-amber-200';
+      if (type === 'error') borderCls = 'border-rose-500/60 bg-rose-950/95 text-rose-100';
+
+      el.className = `px-3.5 py-2 rounded-xl border ${borderCls} shadow-xl text-xs font-semibold backdrop-blur-md transition-all duration-300 opacity-0 translate-y-1`;
+      el.textContent = message;
+      container.appendChild(el);
+
+      requestAnimationFrame(() => {
+        el.classList.remove('opacity-0', 'translate-y-1');
+      });
+
+      setTimeout(() => {
+        el.classList.add('opacity-0', '-translate-y-1');
+        setTimeout(() => el.remove(), 300);
+      }, 3000);
+    }
+
+    // -------------------------------------------------------------------------
+    // F. ANTREAN SINKRONISASI LOKAL & TRANSAKSI FIRESTORE (CLOUD ROOM)
+    // -------------------------------------------------------------------------
+    let localSyncQueue = Promise.resolve();
+
+    function enqueueLocalSync(task) {
+      const queuedPromise = localSyncQueue.then(task, task);
+      localSyncQueue = queuedPromise.catch(() => {});
+      return queuedPromise;
+    }
+
+    function getRoomDocRef(code) {
+      return doc(db, 'artifacts', appId, 'public', 'data', 'card_rooms', code);
+    }
+
+    async function mutateRoomState(mutatorFn, logMessage = null) {
+      // 1. Mode Solo (eksekusi langsung di memori lokal)
+      if (gameState.mode === 'solo' || !isFirebaseReady || !db || !gameState.roomCode) {
+        const res = mutatorFn(gameState);
+        if (res === false) return false;
+        if (res && typeof res === 'object' && res.ok === false) {
+          if (res.warn) showToast(res.warn, 'warn');
+          return false;
+        }
+        if (logMessage) {
+          gameState.lastLog = logMessage;
+          gameState.lastLogId = Date.now() + Math.floor(Math.random() * 100);
+          showToast(logMessage, 'info');
+        }
+        renderAll();
+        return true;
+      }
+
+      // 2. Mode Cloud Multiplayer (Firestore Transaction dengan retry anti-konflik)
+      return enqueueLocalSync(async () => {
+        const roomRef = getRoomDocRef(gameState.roomCode);
+        const maxRetries = 5;
+
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          try {
+            let outcome = true;
+            await runTransaction(db, async (tx) => {
+              const snap = await tx.get(roomRef);
+              if (!snap.exists()) {
+                outcome = false;
+                return;
+              }
+              const data = snap.data();
+              const draft = {
+                roomCode: gameState.roomCode,
+                hostId: data.hostId,
+                players: data.players || {},
+                settings: data.settings || { deckCount: 1, jokerCount: 2 },
+                cards: Array.isArray(data.cards) ? data.cards : [],
+                maxZ: data.maxZ || 60,
+                lastLog: data.lastLog || '',
+                lastLogId: data.lastLogId || 0
+              };
+
+              const res = mutatorFn(draft);
+              if (res === false) {
+                outcome = false;
+                return;
+              }
+              if (res && typeof res === 'object' && res.ok === false) {
+                outcome = res;
+                return;
+              }
+
+              if (logMessage) {
+                draft.lastLog = logMessage;
+                draft.lastLogId = Date.now() + Math.floor(Math.random() * 100);
+              }
+
+              tx.update(roomRef, {
+                players: draft.players,
+                settings: draft.settings,
+                cards: draft.cards,
+                maxZ: draft.maxZ,
+                lastLog: draft.lastLog,
+                lastLogId: draft.lastLogId
+              });
+            });
+
+            if (outcome && typeof outcome === 'object' && outcome.ok === false) {
+              if (outcome.warn) showToast(outcome.warn, 'warn');
+              return false;
+            }
+            return Boolean(outcome);
+          } catch (err) {
+            if (attempt === maxRetries - 1) {
+              console.error("Transaksi Firestore gagal setelah retry:", err);
+              showToast("Gagal menyinkronkan ke server cloud.", "error");
+              return false;
+            }
+            await new Promise(r => setTimeout(r, 40 + Math.random() * 90));
+          }
+        }
+        return false;
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // F2. ENGINE WIFI / P2P LOKAL (HOST SEBAGAI SERVER - WEBRTC PEERJS)
+    // -------------------------------------------------------------------------
+    const P2P_PREFIX = 'kartusandbox-v1-';
+
+    function cleanupP2P() {
+      try {
+        p2pHostConnections.forEach((conn) => {
+          try { conn.close(); } catch (_) {}
+        });
+        p2pHostConnections.clear();
+
+        if (p2pClientConn) {
+          try { p2pClientConn.close(); } catch (_) {}
+          p2pClientConn = null;
+        }
+
+        if (peerInstance) {
+          try { peerInstance.destroy(); } catch (_) {}
+          peerInstance = null;
+        }
+      } catch (e) {
+        console.warn("Cleanup P2P:", e);
+      }
+    }
+
+    function broadcastP2PState() {
+      if (gameState.mode !== 'p2p' || !gameState.isP2PHost) return;
+      const packet = {
+        type: 'STATE_SYNC',
+        state: {
+          roomCode: gameState.roomCode,
+          hostId: gameState.hostId,
+          players: gameState.players,
+          settings: gameState.settings,
+          cards: gameState.cards,
+          maxZ: gameState.maxZ,
+          lastLog: gameState.lastLog,
+          lastLogId: gameState.lastLogId
+        }
+      };
+
+      for (const [peerId, conn] of p2pHostConnections.entries()) {
+        if (conn && conn.open) {
+          try {
+            conn.send(packet);
+          } catch (err) {
+            console.warn("Gagal kirim state ke peer:", peerId, err);
+          }
+        }
+      }
+    }
+
+    function registerAndRunMutator(mutatorFn, logMessage = null, remoteActionId = null) {
+      // 1. Jika Mode WiFi P2P sebagai CLIENT -> kirim permintaan mutasi ke perangkat HOST
+      if (gameState.mode === 'p2p' && !gameState.isP2PHost) {
+        if (!p2pClientConn || !p2pClientConn.open) {
+          showToast("Koneksi ke Host WiFi terputus.", "error");
+          return Promise.resolve(false);
+        }
+        if (remoteActionId) {
+          p2pClientConn.send({
+            type: 'EXEC_ACTION',
+            action: remoteActionId,
+            logMessage
+          });
+        }
+        return Promise.resolve(true);
+      }
+
+      // 2. Jika Mode WiFi P2P sebagai HOST (Server Lokal) -> eksekusi langsung di memori & broadcast
+      if (gameState.mode === 'p2p' && gameState.isP2PHost) {
+        const result = mutatorFn(gameState);
+        if (result === false) return Promise.resolve(false);
+        if (result && typeof result === 'object' && result.ok === false) {
+          if (result.warn) showToast(result.warn, 'warn');
+          return Promise.resolve(false);
+        }
+        if (logMessage) {
+          gameState.lastLog = logMessage;
+          gameState.lastLogId = Date.now() + Math.floor(Math.random() * 100);
+          showToast(logMessage, 'info');
+        }
+        renderAll();
+        broadcastP2PState();
+        return Promise.resolve(true);
+      }
+
+      // 3. Mode Solo atau Mode Cloud Firebase
+      return mutateRoomState(mutatorFn, logMessage);
+    }
+
+    // Reducer aksi terstruktur agar semua mode (Solo, WiFi P2P, Cloud) memakai logika yang sama
+    function executeStructuredAction(draft, act) {
+      switch (act.type) {
+        case 'SHUFFLE': {
+          const deckCards = draft.cards.filter(c => c.loc === 'deck');
+          if (deckCards.length === 0) return { ok: false, warn: "Deck utama kosong! Tekan 'Kumpulkan' terlebih dahulu." };
+          const zValues = deckCards.map(c => c.z);
+          fisherYatesShuffle(zValues);
+          deckCards.forEach((c, idx) => { c.z = zValues[idx]; c.f = false; });
+          return true;
+        }
+        case 'RANDOM_DRAW': {
+          const pool = draft.cards.filter(c => c.loc === 'deck');
+          if (pool.length === 0) return { ok: false, warn: "Deck utama kosong! Tidak ada kartu untuk ditarik acak." };
+          const picked = pool[Math.floor(Math.random() * pool.length)];
+          const myHandCount = draft.cards.filter(c => c.loc === 'hand' && c.own === act.uid).length;
+          picked.loc = 'hand';
+          picked.own = act.uid;
+          picked.f = true;
+          picked.ho = myHandCount + 1;
+          act._pickedCard = { ...picked };
+          return true;
+        }
+        case 'RANDOM_SCATTER': {
+          let targets = draft.cards.filter(c => c.loc === 'deck');
+          if (targets.length === 0) targets = draft.cards.filter(c => c.loc === 'table');
+          if (targets.length === 0) return { ok: false, warn: "Tidak ada kartu di deck atau meja untuk disebar." };
+          fisherYatesShuffle(targets);
+          let zCursor = (draft.maxZ || 60) + 1;
+          targets.forEach((c) => {
+            c.loc = 'table';
+            c.own = null;
+            c.x = Number((24 + Math.random() * 64).toFixed(2));
+            c.y = Number((18 + Math.random() * 64).toFixed(2));
+            c.rot = Math.floor(Math.random() * 76) - 38;
+            c.z = zCursor++;
+          });
+          draft.maxZ = zCursor;
+          return true;
+        }
+        case 'DEAL': {
+          const seatedPlayers = Object.values(draft.players || {}).sort((a, b) => a.seatIndex - b.seatIndex);
+          if (seatedPlayers.length === 0) return false;
+          const deckCards = draft.cards.filter(c => c.loc === 'deck').sort((a, b) => b.z - a.z);
+          if (deckCards.length === 0) return { ok: false, warn: "Deck kosong! Kumpulkan kartu terlebih dahulu." };
+          const totalToDeal = act.dealAllEvenly
+            ? deckCards.length
+            : Math.min(deckCards.length, act.amountPerPlayer * seatedPlayers.length);
+          for (let i = 0; i < totalToDeal; i++) {
+            const recipient = seatedPlayers[i % seatedPlayers.length];
+            const card = deckCards[i];
+            const existingHandCount = draft.cards.filter(c => c.loc === 'hand' && c.own === recipient.uid).length;
+            card.loc = 'hand';
+            card.own = recipient.uid;
+            card.f = true;
+            card.ho = existingHandCount + 1;
+          }
+          return true;
+        }
+        case 'GATHER': {
+          draft.cards.forEach((c, idx) => {
+            c.loc = 'deck';
+            c.own = null;
+            c.f = false;
+            c.x = 50;
+            c.y = 50;
+            c.rot = 0;
+            c.z = idx + 1;
+            c.ho = 0;
+          });
+          draft.maxZ = draft.cards.length + 10;
+          return true;
+        }
+        case 'APPLY_DECK': {
+          const newCards = buildDeckCards(act.deckCount, act.jokerCount);
+          draft.settings = { deckCount: act.deckCount, jokerCount: act.jokerCount };
+          draft.cards = newCards;
+          draft.maxZ = newCards.length + 10;
+          return true;
+        }
+        case 'DRAW_TOP': {
+          const deckCards = draft.cards.filter(c => c.loc === 'deck').sort((a, b) => b.z - a.z);
+          if (deckCards.length === 0) return { ok: false, warn: "Deck utama sudah habis!" };
+          const top = deckCards[0];
+          const myHandCount = draft.cards.filter(c => c.loc === 'hand' && c.own === act.uid).length;
+          top.loc = 'hand';
+          top.own = act.uid;
+          top.f = true;
+          top.ho = myHandCount + 1;
+          return true;
+        }
+        case 'FLIP_TOP_TO_TABLE': {
+          const deckCards = draft.cards.filter(c => c.loc === 'deck').sort((a, b) => b.z - a.z);
+          if (deckCards.length === 0) return { ok: false, warn: "Deck utama sudah habis!" };
+          const top = deckCards[0];
+          const nextZ = (draft.maxZ || 60) + 1;
+          top.loc = 'table';
+          top.own = null;
+          top.f = true;
+          top.x = Number((34 + (Math.random() * 6 - 3)).toFixed(2));
+          top.y = Number((34 + (Math.random() * 6 - 3)).toFixed(2));
+          top.rot = Math.floor(Math.random() * 10) - 5;
+          top.z = nextZ;
+          draft.maxZ = nextZ;
+          act._openedCardId = top.id;
+          return true;
+        }
+        case 'TO_HAND': {
+          const c = draft.cards.find(item => item.id === act.cardId);
+          if (!c) return false;
+          const myHandCount = draft.cards.filter(item => item.loc === 'hand' && item.own === act.uid).length;
+          c.loc = 'hand';
+          c.own = act.uid;
+          c.f = true;
+          c.ho = myHandCount + 1;
+          return true;
+        }
+        case 'MOVE_TABLE': {
+          const c = draft.cards.find(item => item.id === act.cardId);
+          if (!c) return false;
+          const nextZ = (draft.maxZ || 60) + 1;
+          c.loc = 'table';
+          c.own = null;
+          c.x = act.x;
+          c.y = act.y;
+          c.z = nextZ;
+          draft.maxZ = nextZ;
+          return true;
+        }
+        case 'PLAY_FROM_HAND': {
+          const c = draft.cards.find(item => item.id === act.cardId);
+          if (!c) return false;
+          const nextZ = (draft.maxZ || 60) + 1;
+          c.loc = 'table';
+          c.own = null;
+          c.f = act.faceUp;
+          c.x = act.x;
+          c.y = act.y;
+          c.rot = Math.floor(Math.random() * 8) - 4;
+          c.z = nextZ;
+          draft.maxZ = nextZ;
+          return true;
+        }
+        case 'BRING_FRONT': {
+          const c = draft.cards.find(item => item.id === act.cardId);
+          if (!c || c.loc !== 'table') return false;
+          const nextZ = (draft.maxZ || 60) + 1;
+          c.z = nextZ;
+          draft.maxZ = nextZ;
+          return true;
+        }
+        case 'FLIP_TABLE_CARD': {
+          const c = draft.cards.find(item => item.id === act.cardId);
+          if (!c || c.loc !== 'table') return false;
+          const nextZ = (draft.maxZ || 60) + 1;
+          c.f = !c.f;
+          c.z = nextZ;
+          draft.maxZ = nextZ;
+          return true;
+        }
+        case 'ROTATE_TABLE_CARD': {
+          const c = draft.cards.find(item => item.id === act.cardId);
+          if (!c || c.loc !== 'table') return false;
+          c.rot = ((c.rot || 0) + 45) % 360;
+          return true;
+        }
+        case 'SORT_HAND': {
+          const myCards = draft.cards.filter(c => c.loc === 'hand' && c.own === act.uid);
+          if (myCards.length < 2) return false;
+          const suitOrder = { S: 1, H: 2, C: 3, D: 4, J: 5 };
+          const rankOrder = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, J: 11, Q: 12, K: 13, A: 14, JK1: 15, JK2: 16 };
+          myCards.sort((a, b) => {
+            if (suitOrder[a.s] !== suitOrder[b.s]) return suitOrder[a.s] - suitOrder[b.s];
+            return (rankOrder[a.r] || 0) - (rankOrder[b.r] || 0);
+          });
+          myCards.forEach((c, idx) => { c.ho = idx + 1; });
+          return true;
+        }
+        case 'LEAVE_PLAYER': {
+          draft.cards.forEach(c => {
+            if (c.loc === 'hand' && c.own === act.uid) {
+              c.loc = 'deck';
+              c.own = null;
+              c.f = false;
+            }
+          });
+          delete draft.players[act.uid];
+          return true;
+        }
+        default:
+          return false;
+      }
+    }
+
+    function dispatchGameAction(act, logMessage = null) {
+      return registerAndRunMutator((draft) => executeStructuredAction(draft, act), logMessage, act);
+    }
+
+    // -------------------------------------------------------------------------
+    // G. LOBBY & MANAJEMEN ROOM (1 - 8 PEMAIN)
+    // -------------------------------------------------------------------------
+    function switchToGameView() {
+      document.getElementById('lobby-view').classList.add('hidden');
+      document.getElementById('game-view').classList.remove('hidden');
+      renderAll();
+    }
+
+    function switchToLobbyView() {
+      if (unsubscribeRoom) {
+        unsubscribeRoom();
+        unsubscribeRoom = null;
+      }
+      cleanupP2P();
+      tableCardDomPool.clear();
+      document.getElementById('table-cards-layer').innerHTML = '';
+      selectedTableCardId = null;
+      document.getElementById('game-view').classList.add('hidden');
+      document.getElementById('lobby-view').classList.remove('hidden');
+    }
+
+    // 1. Mulai Mode Solo
+    document.getElementById('btn-start-solo').addEventListener('click', async () => {
+      await authReadyPromise;
+      const playerName = getPlayerName();
+      const initialCards = buildDeckCards(1, 2);
+
+      gameState = {
+        mode: 'solo',
+        isP2PHost: false,
+        roomCode: null,
+        hostId: currentUser.uid,
+        players: {
+          [currentUser.uid]: {
+            uid: currentUser.uid,
+            name: playerName,
+            seatIndex: 0,
+            colorIdx: 0,
+            joinedAt: Date.now()
+          }
+        },
+        settings: { deckCount: 1, jokerCount: 2 },
+        cards: initialCards,
+        maxZ: initialCards.length + 10,
+        lastLog: '',
+        lastLogId: 0
+      };
+
+      playCardSound('shuffle');
+      switchToGameView();
+      showToast(`Selamat bermain solo, ${playerName}!`);
+    });
+
+    // 1B. Buat Room WiFi / P2P Lokal (Host sebagai Server)
+    document.getElementById('btn-create-p2p').addEventListener('click', async () => {
+      await authReadyPromise;
+      if (typeof window.Peer === 'undefined') {
+        showToast("Library P2P belum siap. Periksa koneksi internet awal Anda.", "error");
+        return;
+      }
+
+      const btn = document.getElementById('btn-create-p2p');
+      btn.disabled = true;
+      cleanupP2P();
+
+      const playerName = getPlayerName();
+      const code = generateRoomCode();
+      const peerId = P2P_PREFIX + code;
+
+      try {
+        const peer = new window.Peer(peerId, {
+          debug: 0,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
+        });
+        peerInstance = peer;
+
+        peer.on('open', () => {
+          const initialCards = buildDeckCards(1, 2);
+          gameState = {
+            mode: 'p2p',
+            isP2PHost: true,
+            roomCode: code,
+            hostId: currentUser.uid,
+            players: {
+              [currentUser.uid]: {
+                uid: currentUser.uid,
+                name: playerName,
+                seatIndex: 0,
+                colorIdx: 0,
+                joinedAt: Date.now()
+              }
+            },
+            settings: { deckCount: 1, jokerCount: 2 },
+            cards: initialCards,
+            maxZ: initialCards.length + 10,
+            lastLog: `${playerName} membuka Server WiFi P2P`,
+            lastLogId: Date.now()
+          };
+
+          btn.disabled = false;
+          playCardSound('shuffle');
+          switchToGameView();
+          showToast(`Server WiFi P2P aktif! Kode: ${code}`, 'info');
+        });
+
+        peer.on('connection', (conn) => {
+          let boundPlayerUid = null;
+
+          conn.on('data', (msg) => {
+            if (!msg || typeof msg !== 'object') return;
+
+            if (msg.type === 'JOIN') {
+              const joinUid = msg.uid;
+              const joinName = String(msg.name || 'Pemain').slice(0, 16);
+
+              if (!gameState.players[joinUid]) {
+                const seatIdx = findAvailableSeatIndex(gameState.players);
+                if (seatIdx === -1) {
+                  conn.send({ type: 'REJECT', reason: 'Meja sudah penuh (maksimal 8 pemain)!' });
+                  setTimeout(() => conn.close(), 200);
+                  return;
+                }
+                gameState.players[joinUid] = {
+                  uid: joinUid,
+                  name: joinName,
+                  seatIndex: seatIdx,
+                  colorIdx: seatIdx,
+                  joinedAt: Date.now()
+                };
+              } else {
+                gameState.players[joinUid].name = joinName;
+              }
+
+              boundPlayerUid = joinUid;
+              p2pHostConnections.set(conn.peer, conn);
+              gameState.lastLog = `${joinName} terhubung ke Server WiFi`;
+              gameState.lastLogId = Date.now();
+              showToast(gameState.lastLog, 'info');
+              renderAll();
+              broadcastP2PState();
+            } else if (msg.type === 'EXEC_ACTION' && msg.action) {
+              const res = executeStructuredAction(gameState, msg.action);
+              if (res && typeof res === 'object' && res.ok === false) {
+                if (res.warn) {
+                  conn.send({ type: 'TOAST', message: res.warn, toastType: 'warn' });
+                }
+                return;
+              }
+              if (res !== false) {
+                if (msg.logMessage) {
+                  gameState.lastLog = msg.logMessage;
+                  gameState.lastLogId = Date.now() + Math.floor(Math.random() * 100);
+                  showToast(msg.logMessage, 'info');
+                }
+                renderAll();
+                broadcastP2PState();
+              }
+            }
+          });
+
+          conn.on('close', () => {
+            p2pHostConnections.delete(conn.peer);
+            if (boundPlayerUid && gameState.players[boundPlayerUid]) {
+              const leftName = gameState.players[boundPlayerUid].name;
+              executeStructuredAction(gameState, { type: 'LEAVE_PLAYER', uid: boundPlayerUid });
+              gameState.lastLog = `${leftName} terputus dari WiFi`;
+              gameState.lastLogId = Date.now();
+              showToast(gameState.lastLog, 'warn');
+              renderAll();
+              broadcastP2PState();
+            }
+          });
+        });
+
+        peer.on('error', (err) => {
+          console.error("PeerJS Host Error:", err);
+          btn.disabled = false;
+          showToast("Gagal membuat Server WiFi P2P. Coba lagi.", "error");
+        });
+      } catch (err) {
+        btn.disabled = false;
+        showToast("Gagal memulai mode WiFi P2P.", "error");
+      }
+    });
+
+    // 1C. Gabung Room WiFi / P2P Lokal (Client terhubung ke Host)
+    document.getElementById('btn-join-p2p').addEventListener('click', async () => {
+      await authReadyPromise;
+      if (typeof window.Peer === 'undefined') {
+        showToast("Library P2P belum siap.", "error");
+        return;
+      }
+
+      const code = document.getElementById('join-p2p-code-input').value.trim().toUpperCase();
+      if (code.length < 4) {
+        showToast("Masukkan kode room WiFi 5 huruf.", "warn");
+        return;
+      }
+
+      const btn = document.getElementById('btn-join-p2p');
+      btn.disabled = true;
+      cleanupP2P();
+
+      const playerName = getPlayerName();
+      const targetPeerId = P2P_PREFIX + code;
+
+      try {
+        const peer = new window.Peer(undefined, {
+          debug: 0,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
+        });
+        peerInstance = peer;
+
+        peer.on('open', () => {
+          const conn = peer.connect(targetPeerId, { reliable: true });
+          p2pClientConn = conn;
+
+          const timeoutTimer = setTimeout(() => {
+            if (!conn.open) {
+              btn.disabled = false;
+              cleanupP2P();
+              showToast(`Server WiFi "${code}" tidak ditemukan atau tidak merespons.`, "error");
+            }
+          }, 8000);
+
+          conn.on('open', () => {
+            clearTimeout(timeoutTimer);
+            btn.disabled = false;
+            conn.send({
+              type: 'JOIN',
+              uid: currentUser.uid,
+              name: playerName
+            });
+          });
+
+          conn.on('data', (msg) => {
+            if (!msg || typeof msg !== 'object') return;
+
+            if (msg.type === 'REJECT') {
+              showToast(msg.reason || "Ditolak oleh Host.", "warn");
+              switchToLobbyView();
+              return;
+            }
+
+            if (msg.type === 'TOAST') {
+              showToast(msg.message, msg.toastType || 'info');
+              return;
+            }
+
+            if (msg.type === 'STATE_SYNC' && msg.state) {
+              const s = msg.state;
+              gameState = {
+                mode: 'p2p',
+                isP2PHost: false,
+                roomCode: code,
+                hostId: s.hostId,
+                players: s.players || {},
+                settings: s.settings || { deckCount: 1, jokerCount: 2 },
+                cards: Array.isArray(s.cards) ? s.cards : [],
+                maxZ: s.maxZ || 60,
+                lastLog: s.lastLog || '',
+                lastLogId: s.lastLogId || 0
+              };
+
+              if (gameState.lastLog && gameState.lastLogId !== lastShownLogId) {
+                lastShownLogId = gameState.lastLogId;
+                showToast(gameState.lastLog, 'info');
+              }
+
+              if (document.getElementById('game-view').classList.contains('hidden')) {
+                switchToGameView();
+              } else {
+                renderAll();
+              }
+            }
+          });
+
+          conn.on('close', () => {
+            if (!document.getElementById('game-view').classList.contains('hidden')) {
+              showToast("Host (Server WiFi) menutup ruangan.", "warn");
+              switchToLobbyView();
+            }
+          });
+        });
+
+        peer.on('error', (err) => {
+          console.error("PeerJS Client Error:", err);
+          btn.disabled = false;
+          showToast(`Tidak dapat terhubung ke Room WiFi "${code}".`, "error");
+        });
+      } catch (err) {
+        btn.disabled = false;
+        showToast("Gagal menghubungkan ke WiFi P2P.", "error");
+      }
+    });
+
+    // 2. Cloud Room (Firebase Firestore)
+    function subscribeToCloudRoom(code) {
+      if (unsubscribeRoom) unsubscribeRoom();
+      const roomRef = getRoomDocRef(code);
+
+      unsubscribeRoom = onSnapshot(roomRef, (snap) => {
+        if (!snap.exists()) {
+          showToast("Room Cloud sudah tidak tersedia.", "warn");
+          switchToLobbyView();
+          return;
+        }
+        const data = snap.data();
+        gameState = {
+          mode: 'multi',
+          isP2PHost: false,
+          roomCode: code,
+          hostId: data.hostId,
+          players: data.players || {},
+          settings: data.settings || { deckCount: 1, jokerCount: 2 },
+          cards: Array.isArray(data.cards) ? data.cards : [],
+          maxZ: data.maxZ || 60,
+          lastLog: data.lastLog || '',
+          lastLogId: data.lastLogId || 0
+        };
+
+        if (gameState.lastLog && gameState.lastLogId !== lastShownLogId) {
+          lastShownLogId = gameState.lastLogId;
+          showToast(gameState.lastLog, 'info');
+        }
+
+        if (document.getElementById('game-view').classList.contains('hidden')) {
+          switchToGameView();
+        } else {
+          renderAll();
+        }
+      }, (err) => {
+        console.error("Snapshot listener error:", err);
+        showToast("Koneksi Cloud Room terputus.", "error");
+      });
+    }
+
+    document.getElementById('btn-create-room').addEventListener('click', async () => {
+      await authReadyPromise;
+      if (!isFirebaseReady || !db) {
+        showToast("Cloud Server tidak dikonfigurasi. Gunakan Mode Solo atau WiFi P2P Lokal.", "warn");
+        return;
+      }
+
+      const btn = document.getElementById('btn-create-room');
+      btn.disabled = true;
+
+      try {
+        const playerName = getPlayerName();
+        const code = generateRoomCode();
+        const initialCards = buildDeckCards(1, 2);
+
+        const initialDoc = {
+          hostId: currentUser.uid,
+          players: {
+            [currentUser.uid]: {
+              uid: currentUser.uid,
+              name: playerName,
+              seatIndex: 0,
+              colorIdx: 0,
+              joinedAt: Date.now()
+            }
+          },
+          settings: { deckCount: 1, jokerCount: 2 },
+          cards: initialCards,
+          maxZ: initialCards.length + 10,
+          lastLog: `${playerName} membuat Cloud Room`,
+          lastLogId: Date.now()
+        };
+
+        await setDoc(getRoomDocRef(code), initialDoc);
+        playCardSound('shuffle');
+        subscribeToCloudRoom(code);
+      } catch (err) {
+        console.error("Gagal membuat Cloud Room:", err);
+        showToast("Gagal membuat Cloud Room. Coba Mode WiFi P2P Lokal.", "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    document.getElementById('btn-join-room').addEventListener('click', async () => {
+      await authReadyPromise;
+      if (!isFirebaseReady || !db) {
+        showToast("Cloud Server tidak dikonfigurasi. Gunakan Mode Solo atau WiFi P2P Lokal.", "warn");
+        return;
+      }
+
+      const code = document.getElementById('join-code-input').value.trim().toUpperCase();
+      if (code.length < 4) {
+        showToast("Masukkan kode Cloud Room 5 huruf.", "warn");
+        return;
+      }
+
+      const btn = document.getElementById('btn-join-room');
+      btn.disabled = true;
+
+      try {
+        const playerName = getPlayerName();
+        const roomRef = getRoomDocRef(code);
+        const snap = await getDoc(roomRef);
+
+        if (!snap.exists()) {
+          showToast(`Cloud Room "${code}" tidak ditemukan.`, "error");
+          return;
+        }
+
+        await runTransaction(db, async (tx) => {
+          const freshSnap = await tx.get(roomRef);
+          if (!freshSnap.exists()) throw new Error("NOT_FOUND");
+          const data = freshSnap.data();
+          const players = data.players || {};
+
+          if (!players[currentUser.uid]) {
+            const seatIdx = findAvailableSeatIndex(players);
+            if (seatIdx === -1) throw new Error("ROOM_FULL");
+            players[currentUser.uid] = {
+              uid: currentUser.uid,
+              name: playerName,
+              seatIndex: seatIdx,
+              colorIdx: seatIdx,
+              joinedAt: Date.now()
+            };
+          } else {
+            players[currentUser.uid].name = playerName;
+          }
+
+          tx.update(roomRef, {
+            players,
+            lastLog: `${playerName} bergabung ke meja`,
+            lastLogId: Date.now()
+          });
+        });
+
+        subscribeToCloudRoom(code);
+      } catch (err) {
+        if (err && err.message === 'ROOM_FULL') {
+          showToast("Meja sudah penuh (maksimal 8 pemain)!", "warn");
+        } else {
+          showToast("Gagal bergabung ke Cloud Room.", "error");
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // Keluar dari Meja
+    document.getElementById('btn-leave-room').addEventListener('click', async () => {
+      const myName = gameState.players[currentUser?.uid]?.name || 'Pemain';
+      if (gameState.mode === 'p2p') {
+        if (!gameState.isP2PHost && p2pClientConn && p2pClientConn.open && currentUser) {
+          p2pClientConn.send({
+            type: 'EXEC_ACTION',
+            action: { type: 'LEAVE_PLAYER', uid: currentUser.uid },
+            logMessage: `${myName} meninggalkan meja`
+          });
+        }
+        cleanupP2P();
+      } else if (gameState.mode === 'multi' && isFirebaseReady && db && gameState.roomCode && currentUser) {
+        await dispatchGameAction({ type: 'LEAVE_PLAYER', uid: currentUser.uid }, `${myName} meninggalkan meja`);
+      }
+      switchToLobbyView();
+    });
+
+    // -------------------------------------------------------------------------
+    // H. FITUR PENGACAK KARTU, PENGATURAN DECK & KONTROL MEJA
+    // -------------------------------------------------------------------------
+    // 1. Kocok Deck (Shuffle)
+    document.getElementById('btn-shuffle').addEventListener('click', async () => {
+      const deckEl = document.getElementById('deck-stack-visual');
+      deckEl.classList.remove('animate-shuffle');
+      void deckEl.offsetWidth;
+      deckEl.classList.add('animate-shuffle');
+      playCardSound('shuffle');
+
+      const myName = gameState.players[currentUser?.uid]?.name || 'Pemain';
+      await dispatchGameAction({ type: 'SHUFFLE' }, `${myName} mengocok deck kartu`);
+    });
+
+    // 2. Tarik Kartu Acak (Random Draw)
+    document.getElementById('btn-random-draw').addEventListener('click', async () => {
+      if (!currentUser) return;
+      const myName = gameState.players[currentUser.uid]?.name || 'Pemain';
+      const act = { type: 'RANDOM_DRAW', uid: currentUser.uid };
+
+      const ok = await dispatchGameAction(act, `${myName} menarik 1 kartu acak`);
+      if (ok) {
+        playCardSound('slide');
+        if (act._pickedCard) {
+          showToast(`🎲 Kartu acak masuk ke tangan Anda: ${formatCardShortName(act._pickedCard)}`, 'info');
+        }
+      }
+    });
+
+    // 3. Sebar Acak (Random Scatter)
+    document.getElementById('btn-random-scatter').addEventListener('click', async () => {
+      playCardSound('shuffle');
+      const myName = gameState.players[currentUser?.uid]?.name || 'Pemain';
+      await dispatchGameAction({ type: 'RANDOM_SCATTER' }, `${myName} menyebar kartu secara acak di meja!`);
+    });
+
+    // 4. Modal Bagi Kartu (Deal)
+    document.getElementById('btn-open-deal').addEventListener('click', () => {
+      document.getElementById('deal-modal').classList.remove('hidden');
+    });
+    document.getElementById('btn-close-deal').addEventListener('click', () => {
+      document.getElementById('deal-modal').classList.add('hidden');
+    });
+
+    document.querySelectorAll('.deal-preset-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.getElementById('input-deal-amount').value = btn.dataset.dealPreset;
+      });
+    });
+
+    async function executeDeal(dealAllEvenly = false) {
+      const amountPerPlayer = Math.max(1, parseInt(document.getElementById('input-deal-amount').value, 10) || 5);
+      const myName = gameState.players[currentUser?.uid]?.name || 'Pemain';
+
+      const ok = await dispatchGameAction(
+        { type: 'DEAL', amountPerPlayer, dealAllEvenly },
+        dealAllEvenly ? `${myName} membagi rata seluruh sisa deck` : `${myName} membagikan ${amountPerPlayer} kartu/pemain`
+      );
+
+      if (ok) {
+        playCardSound('shuffle');
+        document.getElementById('deal-modal').classList.add('hidden');
+      }
+    }
+
+    document.getElementById('btn-confirm-deal').addEventListener('click', () => executeDeal(false));
+    document.getElementById('btn-deal-all-even').addEventListener('click', () => executeDeal(true));
+
+    // 5. Kumpulkan Semua (Gather)
+    document.getElementById('btn-gather-all').addEventListener('click', async () => {
+      playCardSound('shuffle');
+      selectedTableCardId = null;
+      const myName = gameState.players[currentUser?.uid]?.name || 'Pemain';
+      await dispatchGameAction({ type: 'GATHER' }, `${myName} mengumpulkan semua kartu kembali ke deck`);
+    });
+
+    // 6. Pengaturan Deck & Joker Kustom (1-10 Deck, 0-30 Joker)
+    const inputDeckCount = document.getElementById('input-deck-count');
+    const inputJokerCount = document.getElementById('input-joker-count');
+
+    function updateSettingsPreview() {
+      const d = parseInt(inputDeckCount.value, 10) || 1;
+      const j = parseInt(inputJokerCount.value, 10) || 0;
+      document.getElementById('label-deck-count').textContent = d;
+      document.getElementById('label-standard-cards').textContent = d * 52;
+      document.getElementById('label-joker-count').textContent = j;
+      document.getElementById('label-total-cards').textContent = `${d * 52 + j} Kartu`;
+    }
+
+    inputDeckCount.addEventListener('input', updateSettingsPreview);
+    inputJokerCount.addEventListener('input', updateSettingsPreview);
+
+    document.getElementById('btn-open-settings').addEventListener('click', () => {
+      inputDeckCount.value = gameState.settings.deckCount || 1;
+      inputJokerCount.value = gameState.settings.jokerCount ?? 2;
+      updateSettingsPreview();
+      document.getElementById('settings-modal').classList.remove('hidden');
+    });
+
+    document.getElementById('btn-close-settings').addEventListener('click', () => {
+      document.getElementById('settings-modal').classList.add('hidden');
+    });
+
+    document.getElementById('btn-apply-deck').addEventListener('click', async () => {
+      const newDeckCount = Math.min(10, Math.max(1, parseInt(inputDeckCount.value, 10) || 1));
+      const newJokerCount = Math.min(30, Math.max(0, parseInt(inputJokerCount.value, 10) || 0));
+      const myName = gameState.players[currentUser?.uid]?.name || 'Pemain';
+
+      selectedTableCardId = null;
+      const ok = await dispatchGameAction(
+        { type: 'APPLY_DECK', deckCount: newDeckCount, jokerCount: newJokerCount },
+        `${myName} mengatur deck: ${newDeckCount} Deck + ${newJokerCount} Joker`
+      );
+
+      if (ok) {
+        playCardSound('shuffle');
+        document.getElementById('settings-modal').classList.add('hidden');
+      }
+    });
+
+    // 7. Ambil 1 Kartu Teratas Deck ke Tangan & Buka 1 Kartu ke Meja
+    async function drawTopCardToHand() {
+      if (!currentUser) return;
+      const ok = await dispatchGameAction({ type: 'DRAW_TOP', uid: currentUser.uid });
+      if (ok) playCardSound('slide');
+    }
+
+    async function flipTopCardToTable() {
+      const act = { type: 'FLIP_TOP_TO_TABLE' };
+      const ok = await dispatchGameAction(act);
+      if (ok) {
+        if (act._openedCardId !== undefined) selectedTableCardId = act._openedCardId;
+        playCardSound('flip');
+      }
+    }
+
+    document.getElementById('deck-stack-visual').addEventListener('click', drawTopCardToHand);
+    document.getElementById('btn-draw-one').addEventListener('click', drawTopCardToHand);
+    document.getElementById('btn-flip-top-to-table').addEventListener('click', flipTopCardToTable);
+
+    // -------------------------------------------------------------------------
+    // I. INTERAKSI DRAG & DROP, TAP, DOUBLE-TAP & KARTU TERPILIH
+    // -------------------------------------------------------------------------
+    const tableArena = document.getElementById('table-arena');
+    const tableCardsLayer = document.getElementById('table-cards-layer');
+    const handDock = document.getElementById('private-hand-dock');
+
+    let lastTapCardId = null;
+    let lastTapTime = 0;
+
+    tableCardsLayer.addEventListener('pointerdown', (e) => {
+      const cardEl = e.target.closest('.playing-card');
+      if (!cardEl) return;
+      e.preventDefault();
+
+      const cardId = Number(cardEl.dataset.cardId);
+      const cardObj = gameState.cards.find(c => c.id === cardId);
+      if (!cardObj) return;
+
+      const arenaRect = tableArena.getBoundingClientRect();
+      cardEl.classList.add('is-dragging');
+
+      dragState = {
+        cardId,
+        source: 'table',
+        el: cardEl,
+        startX: e.clientX,
+        startY: e.clientY,
+        arenaRect,
+        origPctX: cardObj.x,
+        origPctY: cardObj.y,
+        latestPctX: cardObj.x,
+        latestPctY: cardObj.y,
+        hasMoved: false
+      };
+    });
+
+    tableArena.addEventListener('pointerdown', (e) => {
+      if (e.target === tableArena || e.target === tableCardsLayer) {
+        if (selectedTableCardId !== null) {
+          selectedTableCardId = null;
+          renderSelectedCardBar();
+          updateSelectedVisuals();
+        }
+      }
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!dragState) return;
+      const dx = e.clientX - dragState.startX;
+      const dy = e.clientY - dragState.startY;
+      if (Math.hypot(dx, dy) > 5) {
+        dragState.hasMoved = true;
+      }
+
+      if (dragState.source === 'table') {
+        const rect = dragState.arenaRect;
+        const pctX = Math.min(96, Math.max(4, ((e.clientX - rect.left) / rect.width) * 100));
+        const pctY = Math.min(96, Math.max(4, ((e.clientY - rect.top) / rect.height) * 100));
+        dragState.latestPctX = pctX;
+        dragState.latestPctY = pctY;
+        dragState.el.style.left = `${pctX}%`;
+        dragState.el.style.top = `${pctY}%`;
+      } else if (dragState.source === 'hand' && dragState.ghostEl) {
+        dragState.ghostEl.style.left = `${e.clientX}px`;
+        dragState.ghostEl.style.top = `${e.clientY}px`;
+      }
+    });
+
+    async function handlePointerRelease(e) {
+      if (!dragState) return;
+      const currentDrag = dragState;
+      dragState = null;
+
+      if (currentDrag.source === 'table') {
+        currentDrag.el.classList.remove('is-dragging');
+
+        // Jika tidak digeser (Tap / Double-Tap)
+        if (!currentDrag.hasMoved) {
+          const now = Date.now();
+          if (lastTapCardId === currentDrag.cardId && now - lastTapTime < 330) {
+            lastTapCardId = null;
+            lastTapTime = 0;
+            selectedTableCardId = currentDrag.cardId;
+            await flipTableCard(currentDrag.cardId);
+          } else {
+            lastTapCardId = currentDrag.cardId;
+            lastTapTime = now;
+            selectedTableCardId = currentDrag.cardId;
+            renderSelectedCardBar();
+            updateSelectedVisuals();
+            await bringCardToFront(currentDrag.cardId);
+          }
+          return;
+        }
+
+        const dockRect = handDock.getBoundingClientRect();
+        // Jika dilepas di atas Dock Tangan Pribadi -> masukkan ke tangan pemain!
+        if (e.clientY >= dockRect.top && currentUser) {
+          selectedTableCardId = null;
+          const ok = await dispatchGameAction({ type: 'TO_HAND', cardId: currentDrag.cardId, uid: currentUser.uid });
+          if (ok) playCardSound('slide');
+          return;
+        }
+
+        // Jika dilepas di atas Meja Virtual -> simpan koordinat & z-index baru
+        const finalX = Number((currentDrag.latestPctX ?? 50).toFixed(2));
+        const finalY = Number(Math.min(95, currentDrag.latestPctY ?? 50).toFixed(2));
+        selectedTableCardId = currentDrag.cardId;
+
+        const ok = await dispatchGameAction({ type: 'MOVE_TABLE', cardId: currentDrag.cardId, x: finalX, y: finalY });
+        if (ok) playCardSound('slide');
+      } else if (currentDrag.source === 'hand') {
+        if (currentDrag.ghostEl) currentDrag.ghostEl.remove();
+        if (currentDrag.el) currentDrag.el.style.opacity = '1';
+
+        const arenaRect = tableArena.getBoundingClientRect();
+        // Jika diketuk cepat (tap) pada kartu di tangan -> lempar ke tengah meja
+        if (!currentDrag.hasMoved) {
+          const centerX = Number((47 + Math.random() * 6).toFixed(2));
+          const centerY = Number((44 + Math.random() * 8).toFixed(2));
+          await playCardFromHandToTable(currentDrag.cardId, centerX, centerY);
+          return;
+        }
+
+        // Jika ditarik dan dilepas di area meja -> taruh di posisi drop
+        if (e.clientY <= arenaRect.bottom) {
+          const pctX = Number(Math.min(94, Math.max(6, ((e.clientX - arenaRect.left) / arenaRect.width) * 100)).toFixed(2));
+          const pctY = Number(Math.min(92, Math.max(6, ((e.clientY - arenaRect.top) / arenaRect.height) * 100)).toFixed(2));
+          await playCardFromHandToTable(currentDrag.cardId, pctX, pctY);
+        }
+      }
+    }
+
+    window.addEventListener('pointerup', handlePointerRelease);
+    window.addEventListener('pointercancel', handlePointerRelease);
+
+    // Memindahkan kartu dari Tangan Pribadi ke Meja Virtual
+    async function playCardFromHandToTable(cardId, xPct, yPct) {
+      selectedTableCardId = cardId;
+      const ok = await dispatchGameAction({ type: 'PLAY_FROM_HAND', cardId, x: xPct, y: yPct, faceUp: throwFaceUp });
+      if (ok) playCardSound(throwFaceUp ? 'flip' : 'slide');
+    }
+
+    async function bringCardToFront(cardId) {
+      const tableCards = gameState.cards.filter(c => c.loc === 'table');
+      const target = tableCards.find(c => c.id === cardId);
+      if (!target) return;
+      const highestZ = tableCards.reduce((max, c) => Math.max(max, c.z || 0), 0);
+      if ((target.z || 0) >= highestZ && highestZ > 0) return;
+
+      await dispatchGameAction({ type: 'BRING_FRONT', cardId });
+    }
+
+    async function flipTableCard(cardId) {
+      const ok = await dispatchGameAction({ type: 'FLIP_TABLE_CARD', cardId });
+      if (ok) playCardSound('flip');
+    }
+
+    // Tombol Quick Action untuk Kartu Terpilih di Meja
+    document.getElementById('btn-sel-flip').addEventListener('click', () => {
+      if (selectedTableCardId !== null) flipTableCard(selectedTableCardId);
+    });
+
+    document.getElementById('btn-sel-rotate').addEventListener('click', async () => {
+      if (selectedTableCardId === null) return;
+      await dispatchGameAction({ type: 'ROTATE_TABLE_CARD', cardId: selectedTableCardId });
+      playCardSound('slide');
+    });
+
+    document.getElementById('btn-sel-to-hand').addEventListener('click', async () => {
+      if (selectedTableCardId === null || !currentUser) return;
+      const targetId = selectedTableCardId;
+      selectedTableCardId = null;
+      const ok = await dispatchGameAction({ type: 'TO_HAND', cardId: targetId, uid: currentUser.uid });
+      if (ok) playCardSound('slide');
+    });
+
+    document.getElementById('btn-sel-close').addEventListener('click', () => {
+      selectedTableCardId = null;
+      renderSelectedCardBar();
+      updateSelectedVisuals();
+    });
+
+    // Toggle Mode Lempar Kartu (Terbuka / Tertutup)
+    document.getElementById('btn-toggle-throw-mode').addEventListener('click', () => {
+      throwFaceUp = !throwFaceUp;
+      const textEl = document.getElementById('throw-mode-text');
+      textEl.textContent = throwFaceUp ? 'Terbuka' : 'Tertutup';
+      textEl.className = throwFaceUp ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold';
+    });
+
+    // Urutkan Kartu di Tangan Pribadi
+    document.getElementById('btn-sort-hand').addEventListener('click', async () => {
+      if (!currentUser) return;
+      const ok = await dispatchGameAction({ type: 'SORT_HAND', uid: currentUser.uid });
+      if (ok) playCardSound('slide');
+    });
+
+    // -------------------------------------------------------------------------
+    // J. RENDERING UI (KURSI PEMAIN, DECK, MEJA, & TANGAN PRIBADI)
+    // -------------------------------------------------------------------------
+    function renderAll() {
+      renderTopHud();
+      renderSeatsBar();
+      renderMainDeck();
+      renderTableCards();
+      renderSelectedCardBar();
+      renderPrivateHand();
+    }
+
+    function renderTopHud() {
+      const modeLabel = document.getElementById('room-mode-label');
+      const codeDisplay = document.getElementById('room-code-display');
+      const copyBtn = document.getElementById('btn-copy-code');
+
+      if (gameState.mode === 'p2p' && gameState.roomCode) {
+        modeLabel.textContent = gameState.isP2PHost ? 'WIFI SERVER:' : 'WIFI P2P:';
+        codeDisplay.textContent = gameState.roomCode;
+        copyBtn.classList.remove('hidden');
+      } else if (gameState.mode === 'multi' && gameState.roomCode) {
+        modeLabel.textContent = 'CLOUD:';
+        codeDisplay.textContent = gameState.roomCode;
+        copyBtn.classList.remove('hidden');
+      } else {
+        modeLabel.textContent = 'MODE SOLO';
+        codeDisplay.textContent = '';
+        copyBtn.classList.add('hidden');
+      }
+
+      const playerCount = Object.keys(gameState.players || {}).length;
+      document.getElementById('player-count-label').textContent = `${playerCount}/8 Pemain`;
+      document.getElementById('deck-info-label').textContent = `${gameState.settings.deckCount} Deck • ${gameState.settings.jokerCount} Joker`;
+    }
+
+    function renderSeatsBar() {
+      const seatsBar = document.getElementById('seats-bar');
+      const playersBySeat = {};
+      Object.values(gameState.players || {}).forEach((p) => {
+        playersBySeat[p.seatIndex] = p;
+      });
+
+      const handCountByUid = {};
+      for (const c of gameState.cards) {
+        if (c.loc === 'hand' && c.own) {
+          handCountByUid[c.own] = (handCountByUid[c.own] || 0) + 1;
+        }
+      }
+
+      let html = '';
+      for (let i = 0; i < 8; i++) {
+        const p = playersBySeat[i];
+        if (p) {
+          const style = SEAT_COLORS[p.colorIdx % SEAT_COLORS.length];
+          const isMe = currentUser && p.uid === currentUser.uid;
+          const isHost = p.uid === gameState.hostId;
+          const count = handCountByUid[p.uid] || 0;
+
+          html += `
+            <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border ${style.badge} text-xs font-semibold shrink-0 ${isMe ? 'ring-1 ring-white/50' : ''}">
+              <span class="w-2 h-2 rounded-full ${style.dot}"></span>
+              <span>${isHost ? '👑 ' : ''}${escapeHtml(p.name)}${isMe ? ' (Anda)' : ''}</span>
+              <span class="ml-1 px-1.5 py-0.2 rounded bg-black/40 text-white font-mono text-[11px]">🃏 ${count}</span>
+            </div>
+          `;
+        } else {
+          html += `
+            <div class="flex items-center gap-1 px-2 py-1 rounded-xl bg-black/20 border border-dashed border-white/10 text-[11px] text-slate-500 shrink-0">
+              <span>Kursi ${i + 1}</span>
+            </div>
+          `;
+        }
+      }
+      seatsBar.innerHTML = html;
+    }
+
+    function renderMainDeck() {
+      const deckCards = gameState.cards.filter(c => c.loc === 'deck');
+      const count = deckCards.length;
+      document.getElementById('deck-count-number').textContent = count;
+
+      const topEl = document.getElementById('deck-layer-top');
+      const l2 = document.getElementById('deck-layer-2');
+      const l3 = document.getElementById('deck-layer-3');
+      const emptyEl = document.getElementById('deck-empty-slot');
+
+      if (count === 0) {
+        topEl.classList.add('hidden');
+        l2.classList.add('hidden');
+        l3.classList.add('hidden');
+        emptyEl.classList.remove('hidden');
+      } else {
+        topEl.classList.remove('hidden');
+        emptyEl.classList.add('hidden');
+        l2.classList.toggle('hidden', count < 3);
+        l3.classList.toggle('hidden', count < 10);
+      }
+    }
+
+    function renderTableCards() {
+      const layer = document.getElementById('table-cards-layer');
+      const tableCards = gameState.cards.filter(c => c.loc === 'table');
+      const activeIds = new Set(tableCards.map(c => c.id));
+
+      // Hapus elemen DOM kartu yang sudah tidak berada di meja
+      for (const [id, el] of tableCardDomPool.entries()) {
+        if (!activeIds.has(id)) {
+          el.remove();
+          tableCardDomPool.delete(id);
+        }
+      }
+
+      // Tambah atau perbarui elemen DOM kartu di meja tanpa rebuild penuh
+      for (const card of tableCards) {
+        let el = tableCardDomPool.get(card.id);
+        if (!el) {
+          el = document.createElement('div');
+          el.className = 'playing-card';
+          el.dataset.cardId = card.id;
+          el.dataset.face = card.f ? '1' : '0';
+          el.innerHTML = renderCardInnerHTML(card, card.f);
+          layer.appendChild(el);
+          tableCardDomPool.set(card.id, el);
+        } else {
+          const prevFace = el.dataset.face === '1';
+          if (prevFace !== Boolean(card.f)) {
+            el.dataset.face = card.f ? '1' : '0';
+            el.innerHTML = renderCardInnerHTML(card, card.f);
+          }
+        }
+
+        if (!dragState || dragState.cardId !== card.id) {
+          el.style.left = `${card.x}%`;
+          el.style.top = `${card.y}%`;
+          el.style.transform = `translate(-50%, -50%) rotate(${card.rot || 0}deg)`;
+          el.style.zIndex = card.z || 10;
+        }
+
+        el.classList.toggle('is-selected', selectedTableCardId === card.id);
+      }
+    }
+
+    function updateSelectedVisuals() {
+      for (const [id, el] of tableCardDomPool.entries()) {
+        el.classList.toggle('is-selected', selectedTableCardId === id);
+      }
+    }
+
+    function renderSelectedCardBar() {
+      const bar = document.getElementById('selected-card-bar');
+      if (selectedTableCardId === null) {
+        bar.classList.add('hidden');
+        return;
+      }
+      const card = gameState.cards.find(c => c.id === selectedTableCardId && c.loc === 'table');
+      if (!card) {
+        selectedTableCardId = null;
+        bar.classList.add('hidden');
+        return;
+      }
+      document.getElementById('selected-card-label').textContent = card.f ? formatCardShortName(card) : 'Kartu Tertutup';
+      bar.classList.remove('hidden');
+    }
+
+    function renderPrivateHand() {
+      const container = document.getElementById('hand-cards-container');
+      const hint = document.getElementById('hand-empty-hint');
+      const badge = document.getElementById('hand-count-badge');
+
+      const myCards = currentUser
+        ? gameState.cards
+            .filter(c => c.loc === 'hand' && c.own === currentUser.uid)
+            .sort((a, b) => (a.ho || 0) - (b.ho || 0))
+        : [];
+
+      badge.textContent = myCards.length;
+
+      // Bersihkan kartu lama (kecuali hint)
+      Array.from(container.querySelectorAll('.hand-card')).forEach(el => el.remove());
+
+      if (myCards.length === 0) {
+        hint.classList.remove('hidden');
+        return;
+      }
+
+      hint.classList.add('hidden');
+
+      for (const card of myCards) {
+        const el = document.createElement('div');
+        el.className = 'hand-card';
+        el.dataset.cardId = card.id;
+        el.innerHTML = renderCardInnerHTML(card, true);
+
+        el.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          el.style.opacity = '0.35';
+
+          const ghost = document.createElement('div');
+          ghost.className = 'playing-card is-dragging pointer-events-none';
+          ghost.style.left = `${e.clientX}px`;
+          ghost.style.top = `${e.clientY}px`;
+          ghost.style.transform = 'translate(-50%, -50%) scale(1.06)';
+          ghost.innerHTML = renderCardInnerHTML(card, throwFaceUp);
+          document.body.appendChild(ghost);
+
+          dragState = {
+            cardId: card.id,
+            source: 'hand',
+            el,
+            ghostEl: ghost,
+            startX: e.clientX,
+            startY: e.clientY,
+            hasMoved: false
+          };
+        });
+
+        container.appendChild(el);
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    // -------------------------------------------------------------------------
+    // K. EVENT TOMBOL TAMBAHAN (SALIN KODE, SUARA, BANTUAN, ACAK NAMA)
+    // -------------------------------------------------------------------------
+    document.getElementById('btn-random-name').addEventListener('click', () => {
+      const prefixes = ['Jagoan', 'BosKartu', 'Suhu', 'Kapten', 'Sultan', 'Master', 'Raja', 'Bintang'];
+      const p = prefixes[Math.floor(Math.random() * prefixes.length)];
+      const num = Math.floor(10 + Math.random() * 89);
+      document.getElementById('player-name-input').value = `${p}_${num}`;
+    });
+
+    document.getElementById('btn-copy-code').addEventListener('click', () => {
+      if (!gameState.roomCode) return;
+      const tempInput = document.createElement('textarea');
+      tempInput.value = gameState.roomCode;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      try {
+        document.execCommand('copy');
+        showToast(`Kode Room "${gameState.roomCode}" disalin! Bagikan ke teman.`, 'info');
+      } catch (e) {
+        showToast(`Kode Room: ${gameState.roomCode}`, 'info');
+      }
+      tempInput.remove();
+    });
+
+    document.getElementById('btn-toggle-sound').addEventListener('click', (e) => {
+      soundEnabled = !soundEnabled;
+      e.currentTarget.textContent = soundEnabled ? '🔊' : '🔇';
+      showToast(soundEnabled ? 'Efek suara diaktifkan' : 'Efek suara dimatikan', 'info');
+    });
+
+    document.getElementById('btn-open-help').addEventListener('click', () => {
+      document.getElementById('help-modal').classList.remove('hidden');
+    });
+    document.getElementById('btn-close-help').addEventListener('click', () => {
+      document.getElementById('help-modal').classList.add('hidden');
+    });
+
+    // Tutup modal saat area luar (backdrop) diklik atau tombol Escape ditekan
+    ['settings-modal', 'deal-modal', 'help-modal'].forEach((modalId) => {
+      const modalEl = document.getElementById(modalId);
+      modalEl.addEventListener('click', (e) => {
+        if (e.target === modalEl) {
+          modalEl.classList.add('hidden');
+        }
+      });
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        ['settings-modal', 'deal-modal', 'help-modal'].forEach((modalId) => {
+          document.getElementById(modalId).classList.add('hidden');
+        });
+        if (selectedTableCardId !== null) {
+          selectedTableCardId = null;
+          renderSelectedCardBar();
+          updateSelectedVisuals();
+        }
+      }
+    });
+  </script>
+</body>
+</html>
